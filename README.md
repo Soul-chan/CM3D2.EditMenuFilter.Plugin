@@ -1,0 +1,2 @@
+# CM3D2.EditMenuFilter.Plugin
+CM3D2/COM3D2のエディットメニューのアイテムを名前や説明で絞り込みが出来るようにするプラグインです。
