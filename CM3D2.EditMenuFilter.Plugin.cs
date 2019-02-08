@@ -12,7 +12,7 @@ using UnityInjector.Attributes;
 namespace CM3D2.EditMenuFilter.Plugin
 {
 	[PluginName( "EditMenuFilter" )]
-	[PluginVersion( "1.1.0.0" )]
+	[PluginVersion( "1.1.0.1" )]
 
 	// 設定データクラス XMLでシリアライズして保存する
 	public class ConfigData
@@ -91,15 +91,12 @@ namespace CM3D2.EditMenuFilter.Plugin
 			if ( menuItem && profName &&
 				 menuItem.Find( "ItemFilterPlugin" ) == null )
 			{
-				Transform filter = GameObject.Instantiate( profName );
+				GameObject filter = NGUITools.AddChild( menuItem.gameObject, profName.gameObject );
 
 				// ItemFilterCtrlコンポーネントをつける
 				if ( filter &&
 					 filter.GetComponent<ItemFilterCtrl>() == null )
 				{
-					// ScrollPanel-MenuItem の子供にする
-					filter.SetParent( menuItem, false );
-
 					filter.name = "ItemFilterPlugin";
 					ItemFilterCtrl ctrl = filter.gameObject.AddComponent<ItemFilterCtrl>();
 					ctrl.FilterType = menuType;
@@ -257,12 +254,32 @@ namespace CM3D2.EditMenuFilter.Plugin
 				DestroyImmediate( transform.Find( "Title" ).GetGameObject() );
 				DestroyImmediate( transform.Find( "FirstName" ).GetGameObject() );
 
+				// Chu B Lip の場合はBGが無く、自身(this.gameObject)に UISprite が付いている
+				// なので、その場合は自身の UISprite は消して他からBGをコピーしてくる
+				spr = gameObject.GetComponent<UISprite>();
+				if ( spr )
+				{
+					// 自身の UISprite は不要なので消す
+					DestroyImmediate( spr );
+
+					// 「プロフィール」の「性格」に付いている「BG」をコピーしてくる
+					Transform personalBG = uiRoot.Find( "ProfilePanel/CharacterInfo/Personal/BG" );
+					if ( personalBG )
+					{
+						GameObject bg = NGUITools.AddChild( gameObject, personalBG.gameObject );
+
+						bg.name = "BG";
+						bg.transform.localPosition = new Vector3( 281, 0, -1 );
+					}
+				}
+
 				go = transform.Find( "BG" ).GetGameObject();
 				if ( go )
 				{
 					spr = go.GetComponent<UISprite>();
-					spr.depth += baseDepth;
+					spr.depth = baseDepth + 1;
 					spr.width = 520;
+					spr.height = 36;
 				}
 
 				go = transform.Find( "LastName" ).GetGameObject();
@@ -274,7 +291,12 @@ namespace CM3D2.EditMenuFilter.Plugin
 					spr.width = 373;
 					pos = go.transform.localPosition;
 					pos.x = 58;
+					pos.y = 16.5f;
 					go.transform.localPosition = pos;
+
+					// Chu B Lip でBGを作った場合、何故か一度表示を切り替えないとdepthの順で表示されない…
+					go.SetActive( false );
+					go.SetActive( true );
 
 					// Random は不要なので消す(COM用)
 					DestroyImmediate( go.transform.Find( "Random" ).GetGameObject() );
@@ -394,16 +416,40 @@ namespace CM3D2.EditMenuFilter.Plugin
 							// ポップアップは不要なので削除
 							Destroy( batu.GetComponent<UIPopupList>() );
 
-							if ( batuButton && symbolSprite && bgSprite )
+							if ( batuButton && symbolSprite )
 							{
-								// ×の入っているアトラスをセット
-								symbolSprite.atlas = bgSprite.atlas;
-								symbolSprite.spriteName = "cm3d2_edit_profile_yotogiskill_sign_batu";
-								symbolSprite.color = new Color( 0.5f, 0.5f, 0.5f, 1.0f );
+								if ( bgSprite )
+								{
+									// ×の入っているアトラスをセット
+									symbolSprite.atlas = bgSprite.atlas;
+									symbolSprite.spriteName = "cm3d2_edit_profile_yotogiskill_sign_batu";
+									symbolSprite.color = new Color( 0.5f, 0.5f, 0.5f, 1.0f );
 
-								symbolSprite.transform.localPosition = new Vector3( 8, 0, 0 );
-								symbolSprite.width = 18;
-								symbolSprite.height = 18;
+									symbolSprite.transform.localPosition = new Vector3( 8, 0, 0 );
+									symbolSprite.width = 18;
+									symbolSprite.height = 18;
+								}
+								else
+								{
+									// Chu B Lip は×のスプライトが無さそうなので、ラベルで作る
+									UILabel label = NGUITools.AddChild<UILabel>( batu );
+									if ( label )
+									{
+										Font font = GameObject.Find( "SystemUI Root" ).GetComponentsInChildren<UILabel>()[0].trueTypeFont;
+										label.trueTypeFont = font;
+										label.fontSize = 20;
+										label.width = 22;
+										label.height = 22;
+										label.pivot = UIWidget.Pivot.Center;
+										label.overflowMethod = UILabel.Overflow.ClampContent;
+										label.effectStyle = UILabel.Effect.None;
+										label.text = "[000000]×";
+										label.depth = symbolSprite.depth;
+										label.transform.localPosition = new Vector3( 15, -1, 0 );
+									}
+									// ▼のスプライトは不要なので消す
+									DestroyImmediate( symbolSprite.gameObject );
+								}
 
 								batuButton.onClick.Clear();
 								batuButton.onClick.Add( new EventDelegate( ClearClickCallback ) );
