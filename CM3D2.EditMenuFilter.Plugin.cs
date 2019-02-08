@@ -12,15 +12,16 @@ using UnityInjector.Attributes;
 namespace CM3D2.EditMenuFilter.Plugin
 {
 	[PluginName( "EditMenuFilter" )]
-	[PluginVersion( "1.1.0.1" )]
+	[PluginVersion( "1.2.0.0" )]
 
 	// 設定データクラス XMLでシリアライズして保存する
 	public class ConfigData
 	{
-		public int HistoryMax = 35;                         // 履歴最大数
-		public bool IgnoreCase = false;                     // 大文字小文字を無視して検索するかどうか
-		public bool FilterDesc = false;						// 説明も検索するかどうか(プリセットの場合は名前の表示ボタン)
-		public List<string> History = new List<string>();   // 現在の履歴リスト
+		public int HistoryMax = 35;						// 履歴最大数
+		public bool IsAnd = true;							// AND検索か OR検索か
+		public bool IgnoreCase = false;					// 大文字小文字を無視して検索するかどうか
+		public bool FilterDesc = false;					// 説明も検索するかどうか(プリセットの場合は名前の表示ボタン)
+		public List<string> History = new List<string>();	// 現在の履歴リスト
 	}
 
 	public class EditMenuFilter : UnityInjector.PluginBase
@@ -146,6 +147,10 @@ namespace CM3D2.EditMenuFilter.Plugin
 		private UIButton m_icBtn = null;
 		private UILabel m_icBtnLabel = null;
 		private UISprite m_icFrameSprite = null;
+
+		private UIButton m_andOrBtn = null;
+		private UILabel m_andOrBtnLabel = null;
+		private UISprite m_andOrFrameSprite = null;
 
 		private UIPopupList m_popupList = null;
 
@@ -288,7 +293,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					go.name = "Name";
 					spr = go.GetComponent<UISprite>();
 					spr.depth += baseDepth;
-					spr.width = 373;
+					spr.width = 338;
 					pos = go.transform.localPosition;
 					pos.x = 58;
 					pos.y = 16.5f;
@@ -330,20 +335,24 @@ namespace CM3D2.EditMenuFilter.Plugin
 					}
 				}
 
+				// And/Orボタンを作る
+				_createButton( uiRoot, baseDepth, "ButtonAndOr", "And", 4.0f, new Vector3( 450, 0, 0 ),
+								ref m_andOrBtn, ref m_andOrBtnLabel, ref m_andOrFrameSprite, AndOrClickCallback );
+
 				// 「大文字小文字を無視」ON/OFFボタンを作る
-				_createButton( uiRoot, baseDepth, "ButtonIC", "A        a", new Vector3( 485, 0, 0 ),
+				_createButton( uiRoot, baseDepth, "ButtonIC", "Aa", -1.0f, new Vector3( 485, 0, 0 ),
 								ref m_icBtn, ref m_icBtnLabel, ref m_icFrameSprite, IcClickCallback );
 
 				if ( FilterType == Type.Preset )
 				{
 					// 「名前」ON/OFFボタンを作る
-					_createButton( uiRoot, baseDepth, "ButtonName", "名", new Vector3( 520, 0, 0 ),
+					_createButton( uiRoot, baseDepth, "ButtonName", "名", 0.0f, new Vector3( 520, 0, 0 ),
 									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, NameClickCallback );
 				}
 				else
 				{
 					// 「説明」ON/OFFボタンを作る
-					_createButton( uiRoot, baseDepth, "ButtonDesc", "説", new Vector3( 520, 0, 0 ),
+					_createButton( uiRoot, baseDepth, "ButtonDesc", "説", 0.0f, new Vector3( 520, 0, 0 ),
 									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, SetumeiClickCallback );
 				}
 				// ポップアップを作る
@@ -407,7 +416,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 						if ( batu )
 						{
 							batu.name = "ButtonClear";
-							batu.transform.localPosition = new Vector3( 432, 0, 0 );
+							batu.transform.localPosition = new Vector3( 398, 0, 0 );
 
 							UIButton batuButton = batu.GetComponent<UIButton>();
 							UISprite symbolSprite = batu.transform.Find( "Symbol" ).GetGetComponent<UISprite>();
@@ -467,6 +476,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 				if ( m_filterInput && m_filterLabel &&
 					 m_setumeiBtn && m_setumeiBtnLabel && m_setumeiFrameSprite &&
 					 m_icBtn && m_icBtnLabel && m_icFrameSprite &&
+					 m_andOrBtn && m_andOrBtnLabel && m_andOrFrameSprite &&
 					 m_popupList )
 				{
 					// 非アクティブ項目が詰められる様にする
@@ -474,6 +484,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					m_isInstall = true;
 
 					// ボタン状態を更新
+					_updateButtonStr( Config.IsAnd, "And", -4.0f, "Or", 1.0f, m_andOrBtn, m_andOrBtnLabel, m_andOrFrameSprite );
 					_updateButton( Config.IgnoreCase, m_icBtn, m_icBtnLabel, m_icFrameSprite );
 					_updateButton( Config.FilterDesc, m_setumeiBtn, m_setumeiBtnLabel, m_setumeiFrameSprite );
 					// 履歴ロード
@@ -488,7 +499,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 		}
 
 		// ボタンを作る
-		private void _createButton( Transform uiRoot, int baseDepth, string name, string labelTxt, Vector3 pos,
+		private void _createButton( Transform uiRoot, int baseDepth, string name, string labelTxt, float spaceX, Vector3 pos,
 			ref UIButton outBtn, ref UILabel label, ref UISprite sprite, EventDelegate.Callback callBack )
 		{
 			Transform btnBase = uiRoot.Find( "ScrollPanel-Category/Scroll View/UIGrid/ButtonCate(Clone)" );
@@ -521,6 +532,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					outBtn.onClick.Add( new EventDelegate( callBack ) );
 
 					label.fontSize = 20;
+					label.floatSpacingX = spaceX;
 					label.text = labelTxt;
 					label.depth += baseDepth;
 
@@ -683,48 +695,59 @@ namespace CM3D2.EditMenuFilter.Plugin
 			}
 		}
 
-		public void HideMenu( string str )
+		public void HideMenu( string checkStr )
 		{
+			// スペースで分割
+			string[] strAry = checkStr.Split( ' ' );
+
 			_menuItemAction( ( item, mi ) =>
 			{
 				bool bContains = false;
 				CompareInfo info = CultureInfo.CurrentCulture.CompareInfo;
 
-				// 大文字小文字を無視するか
-				if ( Config.IgnoreCase )
+				foreach ( var str in strAry )
 				{
-					// 大文字小文字/ひらがなカタカナ/全角半角を区別せずに比較する
-					int result = info.IndexOf( mi.m_strMenuName, str,
-										CompareOptions.IgnoreCase |
-										CompareOptions.IgnoreWidth |
-										CompareOptions.IgnoreKanaType );
-					bContains = (result >= 0);
-				}
-				else
-				{
-					// 単純に同じ文字列を含んでいるかどうか
-					bContains = mi.m_strMenuName.Contains( str );
-				}
-				
-				// 説明もフィルターする場合
-				if ( Config.FilterDesc )
-				{
-					// 既に名前に含まれていたなら調べる必要はない
-					if ( !bContains )
+					// 大文字小文字を無視するか
+					if ( Config.IgnoreCase )
 					{
-						if ( Config.IgnoreCase )
+						// 大文字小文字/ひらがなカタカナ/全角半角を区別せずに比較する
+						int result = info.IndexOf( mi.m_strMenuName, str,
+											CompareOptions.IgnoreCase |
+											CompareOptions.IgnoreWidth |
+											CompareOptions.IgnoreKanaType );
+						bContains = (result >= 0);
+					}
+					else
+					{
+						// 単純に同じ文字列を含んでいるかどうか
+						bContains = mi.m_strMenuName.Contains( str );
+					}
+
+					// 説明もフィルターする場合
+					if ( Config.FilterDesc )
+					{
+						// 既に名前に含まれていたなら調べる必要はない
+						if ( !bContains )
 						{
-							int result = info.IndexOf( mi.m_strInfo, str,
-												CompareOptions.IgnoreCase |
-												CompareOptions.IgnoreWidth |
-												CompareOptions.IgnoreKanaType );
-							bContains = (result >= 0);
-						}
-						else
-						{
-							bContains = mi.m_strInfo.Contains( str );
+							if ( Config.IgnoreCase )
+							{
+								int result = info.IndexOf( mi.m_strInfo, str,
+													CompareOptions.IgnoreCase |
+													CompareOptions.IgnoreWidth |
+													CompareOptions.IgnoreKanaType );
+								bContains = (result >= 0);
+							}
+							else
+							{
+								bContains = mi.m_strInfo.Contains( str );
+							}
 						}
 					}
+
+					// ANDの場合、1つでも含まれていなければ非アクティブにする
+					// ORの場合、1つでも含まれていればアクティブにする
+					if ( Config.IsAnd )	{ if ( !bContains ) { break; } }
+					else				{ if (  bContains ) { break; } }
 				}
 
 				// 含んでればアクティブ、含んでなければ非アクティブ
@@ -788,27 +811,38 @@ namespace CM3D2.EditMenuFilter.Plugin
 			}
 		}
 
-		public void HidePreset( string str )
+		public void HidePreset( string checkStr )
 		{
+			// スペースで分割
+			string[] strAry = checkStr.Split( ' ' );
+
 			_presetAction( ( item ) =>
 			{
 				bool bContains = false;
 				CompareInfo info = CultureInfo.CurrentCulture.CompareInfo;
-
-				// 大文字小文字を無視するか
-				if ( Config.IgnoreCase )
+				
+				foreach ( var str in strAry )
 				{
-					// 大文字小文字/ひらがなカタカナ/全角半角を区別せずに比較する
-					int result = info.IndexOf( item.name, str,
-										CompareOptions.IgnoreCase |
-										CompareOptions.IgnoreWidth |
-										CompareOptions.IgnoreKanaType );
-					bContains = (result >= 0);
-				}
-				else
-				{
-					// 単純に同じ文字列を含んでいるかどうか
-					bContains = item.name.Contains( str );
+					// 大文字小文字を無視するか
+					if ( Config.IgnoreCase )
+					{
+						// 大文字小文字/ひらがなカタカナ/全角半角を区別せずに比較する
+						int result = info.IndexOf( item.name, str,
+											CompareOptions.IgnoreCase |
+											CompareOptions.IgnoreWidth |
+											CompareOptions.IgnoreKanaType );
+						bContains = (result >= 0);
+					}
+					else
+					{
+						// 単純に同じ文字列を含んでいるかどうか
+						bContains = item.name.Contains( str );
+					}
+					
+					// ANDの場合、1つでも含まれていなければ非アクティブにする
+					// ORの場合、1つでも含まれていればアクティブにする
+					if ( Config.IsAnd )	{ if ( !bContains ) { break; } }
+					else				{ if (  bContains ) { break; } }
 				}
 
 				// 含んでればアクティブ、含んでなければ非アクティブ
@@ -968,6 +1002,26 @@ namespace CM3D2.EditMenuFilter.Plugin
 			}
 		}
 
+		// And/Orボタンクリック時のコールバック
+		public void AndOrClickCallback()
+		{
+			if ( m_isInstall )
+			{
+				Config.IsAnd = !Config.IsAnd;
+				// ボタン状態更新
+				_updateButtonStr( Config.IsAnd, "And", -4.0f, "Or", 1.0f, m_andOrBtn, m_andOrBtnLabel, m_andOrFrameSprite );
+
+				SaveData();
+
+				// フィルター中なら自動更新
+				if ( m_bFilterd )
+				{
+					// フィルター実行
+					m_filterInput.Submit();
+				}
+			}
+		}
+
 		// 現在の状態でボタンの色を変える
 		private void _updateButton( bool bEnable, UIButton btn, UILabel label, UISprite sprite )
 		{
@@ -997,6 +1051,45 @@ namespace CM3D2.EditMenuFilter.Plugin
 				btn.hover = btn.defaultColor = color;
 				label.color = fontCol;
 				sprite.enabled = bEnable;
+				btn.UpdateColor( false );
+			}
+		}
+
+		// 現在の状態でボタンの文字を変える
+		private void _updateButtonStr( bool bEnable, string enableText, float enableFloatX, string disableText, float disableFloatX, UIButton btn, UILabel label, UISprite sprite )
+		{
+			if ( m_isInstall )
+			{
+				// ON  ボタン 水色 フォント白
+				// OFF ボタン 緑色 フォント白
+				// 背景が白だとボタンが見えないので色を調整
+				Color color;
+				Color prsdCol;
+				Color fontCol;
+				float spaceX;
+				if ( bEnable )
+				{
+					// 説明も検索時はボタンON
+					color = new Color( 0.0f, 0.5f, 1.0f, 1.0f );      // 水色
+					prsdCol = new Color( 0.15f, 0.55f, 0.10f, 1.0f ); // 緑色
+					fontCol = new Color( 1.0f, 1.0f, 1.0f, 1.0f );    // 白色
+					label.text = enableText;
+					spaceX = enableFloatX;
+				}
+				else
+				{
+					// ボタンOFF
+					color = new Color( 0.15f, 0.55f, 0.10f, 1.0f );   // 緑色
+					prsdCol = new Color( 0.0f, 0.5f, 1.0f, 1.0f );    // 水色
+					fontCol = new Color( 1.0f, 1.0f, 1.0f, 1.0f );    // 白色
+					label.text = disableText;
+					spaceX = disableFloatX;
+				}
+				btn.pressed = prsdCol;
+				btn.hover = btn.defaultColor = color;
+				label.color = fontCol;
+				label.floatSpacingX = spaceX;
+			sprite.enabled = false;
 				btn.UpdateColor( false );
 			}
 		}
