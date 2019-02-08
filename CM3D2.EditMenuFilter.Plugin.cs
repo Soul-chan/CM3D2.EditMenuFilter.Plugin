@@ -11,48 +11,51 @@ using UnityInjector.Attributes;
 
 namespace CM3D2.EditMenuFilter.Plugin
 {
-	[PluginFilter( "CM3D2x64" )]
-	[PluginFilter( "CM3D2x86" )]
-	[PluginFilter( "CM3D2OHx64" )]
-	[PluginFilter( "CM3D2OHx86" )]
-	[PluginFilter( "COM3D2x64" )]
-	[PluginFilter( "COM3D2OHx64" )]
-	[PluginFilter( "COM3D2_Trialx64" )]
 	[PluginName( "EditMenuFilter" )]
-	[PluginVersion( "1.0.0.0" )]
+	[PluginVersion( "1.1.0.0" )]
 
 	// 設定データクラス XMLでシリアライズして保存する
 	public class ConfigData
 	{
 		public int HistoryMax = 35;                         // 履歴最大数
 		public bool IgnoreCase = false;                     // 大文字小文字を無視して検索するかどうか
-		public bool FilterDesc = false;						// 説明も検索するかどうか
+		public bool FilterDesc = false;						// 説明も検索するかどうか(プリセットの場合は名前の表示ボタン)
 		public List<string> History = new List<string>();   // 現在の履歴リスト
 	}
 
 	public class EditMenuFilter : UnityInjector.PluginBase
 	{
 		private bool m_isSceneEdit = false;
-		private bool m_isInstallMenu = false;
-		public string XmlPath { get; private set; }
+		private bool m_isInstallMenuItem = false;
+		private bool m_isInstallMenuSet = false;
+		private bool m_isInstallPreset = false;
+		public string MenuXmlPath { get; private set; }
+		public string SetXmlPath { get; private set; }
+		public string PresetXmlPath { get; private set; }
 
 		public static EditMenuFilter Instance { get; private set; }
 		private void Awake()
 		{
 			// セーブデータ名をセット
-			XmlPath = DataPath + @"\" + Name + ".xml";
+			MenuXmlPath   = DataPath + @"\" + Name + ".xml";
+			SetXmlPath    = DataPath + @"\" + Name + "_Set.xml";
+			PresetXmlPath = DataPath + @"\" + Name + "_Preset.xml";
 		}
 		private void OnLevelWasLoaded( int level )
 		{
 			Instance = this;
 			m_isSceneEdit = false;
-			m_isInstallMenu = false;
+			m_isInstallMenuItem = false;
+			m_isInstallMenuSet = false;
+			m_isInstallPreset = false;
 
 			// エディットならインストールフラグを立てる
 			if ( Application.loadedLevelName == "SceneEdit" )
 			{
 				m_isSceneEdit = true;
-				m_isInstallMenu = true;
+				m_isInstallMenuItem = true;
+				m_isInstallMenuSet = true;
+				m_isInstallPreset = true;
 			}
 		}
 
@@ -61,20 +64,28 @@ namespace CM3D2.EditMenuFilter.Plugin
 			if ( m_isSceneEdit )
 			{
 				// インストール開始
-				if ( m_isInstallMenu )
+				if ( m_isInstallMenuItem )
 				{
-					InstallMenu();
+					m_isInstallMenuItem = InstallMenu( "ScrollPanel-MenuItem", ItemFilterCtrl.Type.Menu );
+				}
+				if ( m_isInstallMenuSet )
+				{
+					m_isInstallMenuSet = InstallMenu( "ScrollPanel-SetItem", ItemFilterCtrl.Type.Set );
+				}
+				if ( m_isInstallPreset )
+				{
+					m_isInstallPreset = InstallMenu( "PresetPanel/PresetViewer", ItemFilterCtrl.Type.Preset );
 				}
 			}
 		}
 		// エディットメニューのScrollPanel-MenuItemにフィルター用オブジェクトをつける
-		private void InstallMenu()
+		private bool InstallMenu( string panelName, ItemFilterCtrl.Type menuType )
 		{
 			Transform uiRoot = GameObject.Find( "UI Root" ).transform;
 
-			if ( uiRoot == null ) { return; }
+			if ( uiRoot == null ) { return true; }
 			// プロフィールの名前を複製して入力を作る
-			Transform menuItem = uiRoot.Find( "ScrollPanel-MenuItem" );
+			Transform menuItem = uiRoot.Find( panelName );
 			Transform profName = uiRoot.Find( "ProfilePanel/CharacterInfo/Name" );
 
 			if ( menuItem && profName &&
@@ -91,11 +102,17 @@ namespace CM3D2.EditMenuFilter.Plugin
 
 					filter.name = "ItemFilterPlugin";
 					ItemFilterCtrl ctrl = filter.gameObject.AddComponent<ItemFilterCtrl>();
-					m_isInstallMenu = false;
+					ctrl.FilterType = menuType;
+					// 作成終了
+					return false;
 				}
 			}
+
+			// 失敗したのでリトライ
+			return true;
 		}
 	}
+
 
 	//////////////////////////////////////////////////////
 	//////////////////////////////////////////////////////
@@ -103,14 +120,21 @@ namespace CM3D2.EditMenuFilter.Plugin
 	/// アイテムのフィルターを制御するコンポーネント
 	public class ItemFilterCtrl : MonoBehaviour
 	{
-		private ConfigData m_config = null;         // 設定データ Config で参照する
+		public enum Type { Menu, Set, Preset }
 
-		private bool m_bFilterd = false;            // フィルター中フラグ
+		public Type FilterType { get; set; }		// フィルターのタイプ
+
+		private ConfigData m_config = null;			// 設定データ Config で参照する
+
+		private bool m_bFilterd = false;			// フィルター中フラグ
 		private bool m_bFilteOnChange = false;      // ほかのメニューに変えた際のフィルター実行フラグ
+		private bool m_bAddPresetLabel = false;		// プリセットに名前のラベルを付ける初期化時のフラグ
 
 		// UIのパーツ
 		private SceneEdit m_sceneEdit = null;
-		private UIGrid m_grid = null;
+		private UIGrid m_grid = null;				// 通常メニューとセット用
+		private UITable m_table = null;				// プリセット用
+		private Transform m_gridTableTrans = null;  // UIGrid か UITable の Transform
 		private UIPanel m_scrollViewPanel = null;
 		private UIScrollView m_scrollView = null;
 		private UIScrollBar m_scrollBar = null;
@@ -130,7 +154,27 @@ namespace CM3D2.EditMenuFilter.Plugin
 
 		private bool m_isInstall = false;
 		private bool m_isPopupStart = false;
+		
+		// 通常メニューとセットの場合とプリセットの場合で、表示/非表示時に実行するメソッドを変える
+		private delegate void ShowFunc();
+		private delegate void HideFunc( string str );
+		private ShowFunc m_show = null;
+		private HideFunc m_hide = null;
 
+		PresetMgr.Filter m_currentFilter = PresetMgr.Filter.None;// 前回のUpdate()から PresetMgr.m_currentActiveFilterBtnName が変わったかの検知用
+		int m_presetChildCount = -1;				// プリセットの数が増減した際の検知用
+
+		// タイプ毎のセーブデータ名を取得する
+		protected virtual string GetXmlPath()
+		{
+			switch( FilterType )
+			{
+				case Type.Menu:		return EditMenuFilter.Instance.MenuXmlPath;
+				case Type.Set:		return EditMenuFilter.Instance.SetXmlPath;
+				case Type.Preset:	return EditMenuFilter.Instance.PresetXmlPath;
+			}
+			return EditMenuFilter.Instance.MenuXmlPath;
+		}
 
 		// 設定データ
 		public ConfigData Config
@@ -142,7 +186,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					try
 					{
 						// XMLから読み込み
-						StreamReader sr = new StreamReader( EditMenuFilter.Instance.XmlPath, new System.Text.UTF8Encoding( false ) );
+						StreamReader sr = new StreamReader( GetXmlPath(), new System.Text.UTF8Encoding( false ) );
 						XmlSerializer serializer = new XmlSerializer( typeof( ConfigData ) );
 						m_config = (ConfigData)serializer.Deserialize( sr );
 						sr.Close();
@@ -161,7 +205,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 		public void SaveData()
 		{
 			// XMLへ書き込み
-			StreamWriter sw = new StreamWriter( EditMenuFilter.Instance.XmlPath, false, new System.Text.UTF8Encoding( false ) );
+			StreamWriter sw = new StreamWriter( GetXmlPath(), false, new System.Text.UTF8Encoding( false ) );
 			XmlSerializer serializer = new XmlSerializer( typeof( ConfigData ) );
 			serializer.Serialize( sw, Config );
 			sw.Close();
@@ -178,9 +222,25 @@ namespace CM3D2.EditMenuFilter.Plugin
 			m_scrollBar = transform.parent.GetGetComponentInChildren<UIScrollBar>(false);
 			m_scrollView = transform.parent.GetGetComponentInChildren<UIScrollView>(false);
 			m_scrollViewPanel = m_scrollView.GetGetComponent<UIPanel>();
-			m_grid = m_scrollView.GetGetComponentInChildren<UIGrid>(false);
 
-			if ( uiRoot && panel && m_sceneEdit && m_grid && m_scrollViewPanel && m_scrollView && m_scrollBar )
+			if ( FilterType == Type.Preset )
+			{
+				m_show = ShowPreset;
+				m_hide = HidePreset;
+				m_table = m_scrollView.GetGetComponentInChildren<UITable>(false);
+				if ( m_table ) { m_gridTableTrans = m_table.transform; }
+				m_bAddPresetLabel = true;
+				m_currentFilter = PresetMgr.m_currentActiveFilterBtnName;
+			}
+			else
+			{
+				m_show = ShowMenu;
+				m_hide = HideMenu;
+				m_grid = m_scrollView.GetGetComponentInChildren<UIGrid>(false);
+				if ( m_grid ) { m_gridTableTrans = m_grid.transform; }
+			}
+
+			if ( uiRoot && panel && m_sceneEdit && m_gridTableTrans && m_scrollViewPanel && m_scrollView && m_scrollBar )
 			{
 				GameObject go;
 				UISprite spr;
@@ -189,7 +249,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 				panel.depth = m_scrollViewPanel.depth + 2;
 
 				// 場所を設定
-				transform.localPosition = new Vector3( -594, 495, 0 );
+				transform.localPosition = new Vector3( -594, (FilterType == Type.Preset) ? 480 : 495, 0 );
 
 				int baseDepth = m_scrollBar.GetComponent<UIPanel>().depth;
 
@@ -252,10 +312,18 @@ namespace CM3D2.EditMenuFilter.Plugin
 				_createButton( uiRoot, baseDepth, "ButtonIC", "A        a", new Vector3( 485, 0, 0 ),
 								ref m_icBtn, ref m_icBtnLabel, ref m_icFrameSprite, IcClickCallback );
 
-				// 「説明」ON/OFFボタンを作る
-				_createButton( uiRoot, baseDepth, "ButtonDesc", "説", new Vector3( 520, 0, 0 ),
-								ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, SetumeiClickCallback );
-				
+				if ( FilterType == Type.Preset )
+				{
+					// 「名前」ON/OFFボタンを作る
+					_createButton( uiRoot, baseDepth, "ButtonName", "名", new Vector3( 520, 0, 0 ),
+									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, NameClickCallback );
+				}
+				else
+				{
+					// 「説明」ON/OFFボタンを作る
+					_createButton( uiRoot, baseDepth, "ButtonDesc", "説", new Vector3( 520, 0, 0 ),
+									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, SetumeiClickCallback );
+				}
 				// ポップアップを作る
 				{
 					Transform popupBase = uiRoot.Find( "ProfilePanel/CharacterInfo/Personal/PopupList" );
@@ -356,7 +424,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					 m_popupList )
 				{
 					// 非アクティブ項目が詰められる様にする
-					m_grid.hideInactive = true;
+					if ( m_grid ) { m_grid.hideInactive = true; }
 					m_isInstall = true;
 
 					// ボタン状態を更新
@@ -425,11 +493,42 @@ namespace CM3D2.EditMenuFilter.Plugin
 		{
 			if ( m_isInstall )
 			{
+				// プリセットの場合は本体のプリセットフィルターが変更された場合に
+				// このプラグインのフィルターも再実行する
+				if ( FilterType == Type.Preset )
+				{
+					if ( m_currentFilter != PresetMgr.m_currentActiveFilterBtnName )
+					{
+						m_bFilteOnChange = true;
+						m_currentFilter = PresetMgr.m_currentActiveFilterBtnName;
+					}
+
+					// プリセットの数が増減した場合、項目が作り直されているので、再度ラベルを作り直す
+					if ( m_gridTableTrans.childCount > 0 &&
+						 m_presetChildCount != -1 &&
+						 m_presetChildCount != m_gridTableTrans.childCount )
+					{
+						m_bAddPresetLabel = true;
+						m_bFilteOnChange = true;    // 再実行も行う
+						// m_presetChildCount は _AddPresetLabel() でラベルが作り終わった段階でセットされる
+					}
+				}
+
+				// 子供が作られ終わってからプリセットに名前のラベルを付ける
+				if ( m_bAddPresetLabel )
+				{
+					if ( m_gridTableTrans.childCount > 0 )
+					{
+						_AddPresetLabel();
+						m_bAddPresetLabel = false;
+					}
+				}
+
 				// 変更時のフィルター実行
 				if ( m_bFilteOnChange )
 				{
 					// 子供が作られ終わったら
-					if ( m_grid.transform.childCount > 0 )
+					if ( m_gridTableTrans.childCount > 0 )
 					{
 						// フィルター実行
 						m_filterInput.Submit();
@@ -445,6 +544,12 @@ namespace CM3D2.EditMenuFilter.Plugin
 		{
 			if ( m_isInstall )
 			{
+				// プリセット用の場合はラベルを作る
+				if ( FilterType == Type.Preset )
+				{
+					m_bAddPresetLabel = true;
+				}
+
 				if ( m_bFilterd )
 				{
 					// ほかのメニューに変える際にもOnEnableに来るので
@@ -462,7 +567,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 		{
 			if ( UIInput.current.value == "" )
 			{
-				Show();
+				m_show();
 			}
 		}
 
@@ -471,11 +576,13 @@ namespace CM3D2.EditMenuFilter.Plugin
 		{
 			if ( UIInput.current.value == "" )
 			{
-				Show();
+				// ShowMenu / ShowPreset
+				m_show();
 			}
 			else
 			{
-				Hide( UIInput.current.value );
+				// HideMenu / HidePreset
+				m_hide( UIInput.current.value );
 				AddPopup( UIInput.current.value );
 			}
 		}
@@ -489,15 +596,16 @@ namespace CM3D2.EditMenuFilter.Plugin
 				// m_grid.GetChildList() は hideInactive が true だと非アクティブを返してくれないので自前
 				var items =
 				Enumerable
-				.Range( 0, m_grid.transform.childCount )
-				.Select( i => m_grid.transform.GetChild( i ) )
-				.Where( s => s != null )
+				.Range( 0, m_gridTableTrans.childCount )
+				.Select( i => m_gridTableTrans.GetChild( i ) )
+				.Where( item => item != null )
 				.Select( item => item.Find( "Button" ) )
 				.Where( btn => btn != null )
 				.Select( btn => btn.GetComponent<ButtonEdit>() )
 				.Where( edit => edit != null && edit.m_MenuItem != null )
 				.Where( edit => edit.m_MenuItem.m_strMenuFileName != "" )   // フォルダを除外
-				.Where( edit => edit.m_MenuItem.m_strMenuName != "無し" ) // アイテムを外すボタンを除外
+				.Where( edit => edit.m_MenuItem.m_strMenuName != "無し" )	// アイテムを外すボタンを除外
+				.Where( edit => !edit.m_MenuItem.m_strMenuName.Contains("脱ぐ・外す") )	// セットを外すボタンを除外
 				.Select( edit => new { item = edit.transform.parent.gameObject, mi = edit.m_MenuItem } )
 				.ToList();
 
@@ -529,7 +637,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 			}
 		}
 
-		public void Hide( string str )
+		public void HideMenu( string str )
 		{
 			_menuItemAction( ( item, mi ) =>
 			{
@@ -581,7 +689,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 			m_bFilterd = true;
 		}
 
-		public void Show()
+		public void ShowMenu()
 		{
 			if ( m_bFilterd )
 			{
@@ -597,6 +705,182 @@ namespace CM3D2.EditMenuFilter.Plugin
 				m_bFilterd = false;
 			}
 		}
+
+		/////////////////////////
+		// プリセット用
+		// プリセットリストのアイテムに対してアクションを実行する
+		private void _AddPresetLabel()
+		{
+			if ( m_isInstall )
+			{
+				Font font = GameObject.Find( "SystemUI Root" ).GetComponentsInChildren<UILabel>()[0].trueTypeFont;
+
+				_presetAction( null, true, ( item ) =>
+				{
+					UITexture tex = item.GetComponent<UITexture>();
+					if ( tex )
+					{
+						UILabel label = NGUITools.AddChild<UILabel>( item );
+						if ( label )
+						{
+							label.trueTypeFont = font;
+							label.fontSize = 22;
+							label.width = tex.width;
+							label.height = tex.height;
+							label.pivot = UIWidget.Pivot.TopLeft;
+							label.overflowMethod = UILabel.Overflow.ResizeHeight;
+							label.effectStyle = UILabel.Effect.Outline;
+							label.text = "[00FF00]" + item.name.Replace( ".preset", "" );
+							label.depth = tex.depth + 2;
+
+							// 名前表示ON/OFFの状態をセット
+							label.gameObject.SetActive( Config.FilterDesc );
+						}
+					}
+				} );
+				m_presetChildCount = m_gridTableTrans.childCount;
+			}
+		}
+
+		public void HidePreset( string str )
+		{
+			_presetAction( ( item ) =>
+			{
+				bool bContains = false;
+				CompareInfo info = CultureInfo.CurrentCulture.CompareInfo;
+
+				// 大文字小文字を無視するか
+				if ( Config.IgnoreCase )
+				{
+					// 大文字小文字/ひらがなカタカナ/全角半角を区別せずに比較する
+					int result = info.IndexOf( item.name, str,
+										CompareOptions.IgnoreCase |
+										CompareOptions.IgnoreWidth |
+										CompareOptions.IgnoreKanaType );
+					bContains = (result >= 0);
+				}
+				else
+				{
+					// 単純に同じ文字列を含んでいるかどうか
+					bContains = item.name.Contains( str );
+				}
+
+				// 含んでればアクティブ、含んでなければ非アクティブ
+				item.SetActive( bContains );
+			} );
+
+			// フィルター中フラグをON
+			m_bFilterd = true;
+		}
+
+		public void ShowPreset()
+		{
+			if ( m_bFilterd )
+			{
+				_presetAction( ( item ) =>
+				{
+					if ( !item.activeSelf )
+					{
+						item.SetActive( true );
+					}
+				} );
+
+				// フィルター中フラグをOFF
+				m_bFilterd = false;
+			}
+		}
+
+		// プリセットリストのアイテムに対してアクションを実行する
+		private void _presetAction( Action<GameObject> action )
+		{
+			_presetAction( _isCurrentActivePreset, true, action );
+		}
+
+		// プリセットリストのアイテムに対してアクションを実行する
+		private void _presetAction( Func<Transform, bool> whereFunc, bool bResetView, Action<GameObject> action )
+		{
+			if ( m_isInstall )
+			{
+				// プリセットのメニューアイテムには ButtonEdit はない
+				var items =
+				Enumerable
+				.Range( 0, m_gridTableTrans.childCount )
+				.Select( i => m_gridTableTrans.GetChild( i ) )
+				.Where( item => (whereFunc != null) ? (whereFunc( item )) : (true) )
+				.Select( item => item.gameObject )
+				.ToList();
+
+				items.ForEach( s => action( s ) );
+
+				if ( bResetView )
+				{
+					// エディットメニューの表示を更新する
+					_resetPresetView();
+				}
+			}
+		}
+
+		// 現在のプリセットフィルターでアクティブなプリセットかどうかを判定する
+		private bool _isCurrentActivePreset( Transform trans )
+		{
+			if ( trans == null ) { return false; }
+
+			// フィルターが「全」の場合は全てアクティブ
+			if ( PresetMgr.m_currentActiveFilterBtnName == PresetMgr.Filter.NotFilter ) { return true; }
+
+			// それ以外は現在のプリセットフィルターでアクティブかどうかを右下のアイコンのスプライト名で判定する
+			UISprite spr = trans.GetGetComponentInChildren<UISprite>(true);
+			if ( spr )
+			{
+				switch( PresetMgr.m_currentActiveFilterBtnName )
+				{
+					case PresetMgr.Filter.All:  // 服/体 cm3d2_edit_priset_kindicon_clothes_body
+						return spr.spriteName.EndsWith( "kindicon_clothes_body" );
+					
+					case PresetMgr.Filter.Wear: // 服    cm3d2_edit_priset_kindicon_clothes
+						return spr.spriteName.EndsWith( "kindicon_clothes" );
+					
+					case PresetMgr.Filter.Body: // 体    cm3d2_edit_priset_kindicon_body
+						return spr.spriteName.EndsWith( "kindicon_body" );
+				}
+			}
+			return false;
+		}
+
+		// プリセットリストの表示を更新する
+		private void _resetPresetView()
+		{
+			if ( m_isInstall )
+			{
+				m_table.Reposition();
+				m_scrollView.ResetPosition();
+				m_scrollBar.@value = 0.0f;
+			}
+		}
+
+		// 名前ON/OFFボタンクリック時のコールバック
+		public void NameClickCallback()
+		{
+			if ( m_isInstall )
+			{
+				Config.FilterDesc = !Config.FilterDesc;
+				// ボタン状態更新
+				_updateButton( Config.FilterDesc, m_setumeiBtn, m_setumeiBtnLabel, m_setumeiFrameSprite );
+
+				SaveData();
+
+				_presetAction( null, false, ( item ) =>
+				{
+					UILabel label = item.GetGetComponentInChildren<UILabel>(true);
+					if ( label )
+					{
+						// 名前表示ON/OFFの状態をセット
+						label.gameObject.SetActive( Config.FilterDesc );
+					}
+				} );
+			}
+		}
+		/////////////////////////
 
 		// 大文字小文字を無視するON/OFFボタンクリック時のコールバック
 		public void IcClickCallback()
@@ -831,3 +1115,4 @@ namespace CM3D2.EditMenuFilter.Plugin
 		
 	}
 }
+ 
