@@ -12,7 +12,7 @@ using UnityInjector.Attributes;
 namespace CM3D2.EditMenuFilter.Plugin
 {
 	[PluginName( "EditMenuFilter" )]
-	[PluginVersion( "1.3.0.0" )]
+	[PluginVersion( "1.4.0.0" )]
 
 	// 設定データクラス XMLでシリアライズして保存する
 	public class ConfigData
@@ -30,6 +30,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 		private bool m_isInstallMenuItem = false;
 		private bool m_isInstallMenuSet = false;
 		private bool m_isInstallPreset = false;
+		public bool IsCom { get; private set; }
 		public string MenuXmlPath { get; private set; }
 		public string SetXmlPath { get; private set; }
 		public string PresetXmlPath { get; private set; }
@@ -45,7 +46,8 @@ namespace CM3D2.EditMenuFilter.Plugin
 
 			VanillaHash = new Dictionary<int, bool>();
 
-			if ( Application.dataPath.Contains( "COM3D2" ) )
+			IsCom = Application.dataPath.Contains( "COM3D2" );
+			if ( IsCom )
 			{
 				// COMはパスを含まないアイテムがバニラかmodフォルダ直下のmod
 				var mods = _getModOnlysMenuFiles();
@@ -110,20 +112,20 @@ namespace CM3D2.EditMenuFilter.Plugin
 				// インストール開始
 				if ( m_isInstallMenuItem )
 				{
-					m_isInstallMenuItem = InstallMenu( "ScrollPanel-MenuItem", ItemFilterCtrl.Type.Menu );
+					m_isInstallMenuItem = InstallMenu( "ScrollPanel-MenuItem", ItemFilterCtrl.Type.Menu, IsCom );
 				}
 				if ( m_isInstallMenuSet )
 				{
-					m_isInstallMenuSet = InstallMenu( "ScrollPanel-SetItem", ItemFilterCtrl.Type.Set );
+					m_isInstallMenuSet = InstallMenu( "ScrollPanel-SetItem", ItemFilterCtrl.Type.Set, IsCom );
 				}
 				if ( m_isInstallPreset )
 				{
-					m_isInstallPreset = InstallMenu( "PresetPanel/PresetViewer", ItemFilterCtrl.Type.Preset );
+					m_isInstallPreset = InstallMenu( "PresetPanel/PresetViewer", ItemFilterCtrl.Type.Preset, IsCom );
 				}
 			}
 		}
 		// エディットメニューのScrollPanel-MenuItemにフィルター用オブジェクトをつける
-		private bool InstallMenu( string panelName, ItemFilterCtrl.Type menuType )
+		private bool InstallMenu( string panelName, ItemFilterCtrl.Type menuType, bool isCom )
 		{
 			Transform uiRoot = GameObject.Find( "UI Root" ).transform;
 
@@ -144,6 +146,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					filter.name = "ItemFilterPlugin";
 					ItemFilterCtrl ctrl = filter.gameObject.AddComponent<ItemFilterCtrl>();
 					ctrl.FilterType = menuType;
+					ctrl.IsCom = isCom;
 					// 作成終了
 					return false;
 				}
@@ -163,19 +166,32 @@ namespace CM3D2.EditMenuFilter.Plugin
 	{
 		public enum Type { Menu, Set, Preset }
 
-		public Type FilterType { get; set; }		// フィルターのタイプ
+		[Flags]
+		public enum ItemType
+		{
+			None		= 0,
 
-		private ConfigData m_config = null;			// 設定データ Config で参照する
+			Vanilla		= 1 << 0,	// バニラ
+			Compatible	= 1 << 1,	// CM互換アイテム
+			Mod			= 1 << 2,	// Mod
+
+			All			= Vanilla | Compatible | Mod,
+		}
+
+		public Type FilterType { get; set; }		// フィルターのタイプ
+		public bool IsCom { get; set; }			// COM3D2の場合 true
+
+		private ConfigData m_config = null;		// 設定データ Config で参照する
 
 		private bool m_bFilterd = false;			// フィルター中フラグ
-		private bool m_bFilteOnChange = false;      // ほかのメニューに変えた際のフィルター実行フラグ
-		private bool m_bAddPresetLabel = false;		// プリセットに名前のラベルを付ける初期化時のフラグ
+		private bool m_bFilteOnChange = false;		// ほかのメニューに変えた際のフィルター実行フラグ
+		private bool m_bAddPresetLabel = false;	// プリセットに名前のラベルを付ける初期化時のフラグ
 
 		// UIのパーツ
 		private SceneEdit m_sceneEdit = null;
 		private UIGrid m_grid = null;				// 通常メニューとセット用
-		private UITable m_table = null;				// プリセット用
-		private Transform m_gridTableTrans = null;  // UIGrid か UITable の Transform
+		private UITable m_table = null;			// プリセット用
+		private Transform m_gridTableTrans = null;	// UIGrid か UITable の Transform
 		private UIPanel m_scrollViewPanel = null;
 		private UIScrollView m_scrollView = null;
 		private UIScrollBar m_scrollBar = null;
@@ -195,9 +211,15 @@ namespace CM3D2.EditMenuFilter.Plugin
 		private UILabel m_andOrBtnLabel = null;
 		private UISprite m_andOrFrameSprite = null;
 
+		private GameObject m_typeFilterPanel = null;
+
 		private UIButton m_3d2Btn = null;
 		private UILabel m_3d2BtnLabel = null;
 		private UISprite m_3d2FrameSprite = null;
+
+		private UIButton m_compatibleBtn = null;
+		private UILabel m_compatibleBtnLabel = null;
+		private UISprite m_compatibleFrameSprite = null;
 
 		private UIButton m_modBtn = null;
 		private UILabel m_modBtnLabel = null;
@@ -207,9 +229,8 @@ namespace CM3D2.EditMenuFilter.Plugin
 
 		private bool m_isInstall = false;
 		private bool m_isPopupStart = false;
-
-		private bool m_on3d2 = true;
-		private bool m_onMod = true;
+		
+		private ItemType m_typeFilter = ItemType.All;
 
 		// 通常メニューとセットの場合とプリセットの場合で、表示/非表示時に実行するメソッドを変える
 		private delegate void ShowFunc();
@@ -305,7 +326,15 @@ namespace CM3D2.EditMenuFilter.Plugin
 				panel.depth = m_scrollViewPanel.depth + 4;
 
 				// 場所を設定
-				transform.localPosition = new Vector3( (FilterType == Type.Set) ? -620 : -594, (FilterType == Type.Preset) ? 480 : 495, 0 );
+				{
+					Vector3[] posTbl =
+					{
+						new Vector3( -594, 495, 0 ), // Menu
+						new Vector3( -640, 495, 0 ), // Set
+						new Vector3( -594, 480, 0 ), // Preset
+					};
+					transform.localPosition = posTbl[(int)FilterType];
+				}
 
 				int baseDepth = m_scrollBar.GetComponent<UIPanel>().depth;
 
@@ -341,16 +370,29 @@ namespace CM3D2.EditMenuFilter.Plugin
 					spr.height = 36;
 				}
 
-				// V/M用にBGをコピー
+				// V/互/M用のパネルを作る
 				if( FilterType != Type.Preset )
 				{
-					go = NGUITools.AddChild( gameObject, go );
+					var tfPanel = NGUITools.AddChild<UIPanel>( gameObject );
+					tfPanel.depth = panel.depth;
+
+					m_typeFilterPanel = tfPanel.gameObject;
+					m_typeFilterPanel.name = "TypeFilterPanel";
+					Vector3[] posTbl =
+					{
+						new Vector3( 607, 0, -1 ), // Menu
+						new Vector3( 588, 0, -1 ), // Set
+						new Vector3(   0, 0, -1 ), // Preset
+					};
+					m_typeFilterPanel.transform.localPosition = posTbl[(int)FilterType];
+
+					// BGをコピー
+					go = NGUITools.AddChild( m_typeFilterPanel, go );
 					if ( go )
 					{
 						go.name = "BG2";
-						go.transform.localPosition = new Vector3( (FilterType == Type.Set) ? 572 : 607, 0, -1 );
 						spr = go.GetComponent<UISprite>();
-						spr.width = 72;
+						spr.width = (IsCom) ? 108 : 72;
 						spr.height = 36;
 					}
 				}
@@ -406,34 +448,55 @@ namespace CM3D2.EditMenuFilter.Plugin
 				float x = 450;
 				float w = 35;
 				// And/Orボタンを作る
-				_createButton( uiRoot, baseDepth, "ButtonAndOr", "And", 4.0f, new Vector3( x+(w*0), 0, 0 ),
+				_createButton( gameObject, uiRoot, baseDepth, "ButtonAndOr", "And", 4.0f, new Vector3( x+(w*0), 0, 0 ),
 								ref m_andOrBtn, ref m_andOrBtnLabel, ref m_andOrFrameSprite, AndOrClickCallback );
 
 				// 「大文字小文字を無視」ON/OFFボタンを作る
-				_createButton( uiRoot, baseDepth, "ButtonIC", "Aa", -1.0f, new Vector3( x+(w*1), 0, 0 ),
+				_createButton( gameObject, uiRoot, baseDepth, "ButtonIC", "Aa", -1.0f, new Vector3( x+(w*1), 0, 0 ),
 								ref m_icBtn, ref m_icBtnLabel, ref m_icFrameSprite, IcClickCallback );
 
 				if ( FilterType == Type.Preset )
 				{
 					// 「名前」ON/OFFボタンを作る
-					_createButton( uiRoot, baseDepth, "ButtonName", "名", 0.0f, new Vector3( x+(w*2), 0, 0 ),
+					_createButton( gameObject, uiRoot, baseDepth, "ButtonName", "名", 0.0f, new Vector3( x+(w*2), 0, 0 ),
 									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, NameClickCallback );
 				}
 				else
 				{
 					// 「説明」ON/OFFボタンを作る
-					_createButton( uiRoot, baseDepth, "ButtonDesc", "説", 0.0f, new Vector3( x+(w*2), 0, 0 ),
+					_createButton( gameObject, uiRoot, baseDepth, "ButtonDesc", "説", 0.0f, new Vector3( x+(w*2), 0, 0 ),
 									ref m_setumeiBtn, ref m_setumeiBtnLabel, ref m_setumeiFrameSprite, SetumeiClickCallback );
-
-					x = (FilterType == Type.Set) ? x+(w*3) : x+(w*4);
-					_createButton( uiRoot, baseDepth, "Button3d2", "Ｖ", 0.0f, new Vector3( x, 0, 0 ),
-									ref m_3d2Btn, ref m_3d2BtnLabel, ref m_3d2FrameSprite, C3D2ClickCallback );
-
-					_createButton( uiRoot, baseDepth, "ButtonMod", "Ｍ", 0.0f, new Vector3( x+w, 0, 0 ),
-									ref m_modBtn, ref m_modBtnLabel, ref m_modFrameSprite, ModClickCallback );
-
-
 				}
+
+				// V/互/M用のパネルの中身を作る
+				if ( m_typeFilterPanel )
+				{
+					x = (IsCom) ? -w : -17;
+
+					// CMの場合は、互換が無いので、バニラと連動させておく
+					ItemType vanillaType = ItemType.Vanilla;
+					if ( !IsCom ) { vanillaType |= ItemType.Compatible; }
+					// 「バニラ」ON/OFFボタンを作る
+					_createButton( m_typeFilterPanel, uiRoot, baseDepth, "Button3d2", "Ｖ", 0.0f, new Vector3( x, 0, 0 ),
+									ref m_3d2Btn, ref m_3d2BtnLabel, ref m_3d2FrameSprite,
+									() => TypeFilterClickCallback( vanillaType, ItemType.Mod ) );
+
+					// COMのみ「互換」ON/OFFボタンを作る
+					if ( IsCom )
+					{
+						x += w;
+						_createButton( m_typeFilterPanel, uiRoot, baseDepth, "ButtonCompatible", "互", 0.0f, new Vector3( x, 0, 0 ),
+										ref m_compatibleBtn, ref m_compatibleBtnLabel, ref m_compatibleFrameSprite,
+										() => TypeFilterClickCallback( ItemType.Compatible, ItemType.Mod ) );
+					}
+
+					// 「Mod」ON/OFFボタンを作る
+					x += w;
+					_createButton( m_typeFilterPanel, uiRoot, baseDepth, "ButtonMod", "Ｍ", 0.0f, new Vector3( x, 0, 0 ),
+									ref m_modBtn, ref m_modBtnLabel, ref m_modFrameSprite,
+									() => TypeFilterClickCallback( ItemType.Mod, ItemType.Vanilla | ItemType.Compatible ) );
+				}
+
 				// ポップアップを作る
 				{
 					Transform popupBase = uiRoot.Find( "ProfilePanel/CharacterInfo/Personal/PopupList" );
@@ -566,8 +629,7 @@ namespace CM3D2.EditMenuFilter.Plugin
 					_updateButtonStr( Config.IsAnd, "And", -4.0f, "Or", 1.0f, m_andOrBtn, m_andOrBtnLabel, m_andOrFrameSprite );
 					_updateButton( Config.IgnoreCase, m_icBtn, m_icBtnLabel, m_icFrameSprite );
 					_updateButton( Config.FilterDesc, m_setumeiBtn, m_setumeiBtnLabel, m_setumeiFrameSprite );
-					_updateButton( m_on3d2, m_3d2Btn, m_3d2BtnLabel, m_3d2FrameSprite );
-					_updateButton( m_onMod, m_modBtn, m_modBtnLabel, m_modFrameSprite );
+					_updateFilterButton();
 					// 履歴ロード
 					_loadPopup();
 				}
@@ -580,14 +642,14 @@ namespace CM3D2.EditMenuFilter.Plugin
 		}
 
 		// ボタンを作る
-		private void _createButton( Transform uiRoot, int baseDepth, string name, string labelTxt, float spaceX, Vector3 pos,
+		private void _createButton( GameObject parent, Transform uiRoot, int baseDepth, string name, string labelTxt, float spaceX, Vector3 pos,
 			ref UIButton outBtn, ref UILabel label, ref UISprite sprite, EventDelegate.Callback callBack )
 		{
 			Transform btnBase = uiRoot.Find( "ScrollPanel-Category/Scroll View/UIGrid/ButtonCate(Clone)" );
 
 			if ( btnBase )
 			{
-				GameObject btn = NGUITools.AddChild( gameObject, btnBase.gameObject );
+				GameObject btn = NGUITools.AddChild( parent, btnBase.gameObject );
 
 				btn.name = name;
 				btn.transform.localPosition = pos;
@@ -706,15 +768,15 @@ namespace CM3D2.EditMenuFilter.Plugin
 		{
 			if ( UIInput.current.value == "" )
 			{
-				if ( m_on3d2 && m_onMod )	{ m_show(); }
-				else						{ m_hide( UIInput.current.value ); }
+				if ( EqualTypeFilter( ItemType.All ) )	{ m_show(); }
+				else									{ m_hide( UIInput.current.value ); }
 			}
 		}
 
 		// 入力決定時コールバック
 		public void OnFilterSubmit()
 		{
-			if ( UIInput.current.value == "" && m_on3d2 && m_onMod )
+			if ( UIInput.current.value == "" && EqualTypeFilter( ItemType.All ) )
 			{
 				// ShowMenu / ShowPreset
 				m_show();
@@ -787,16 +849,23 @@ namespace CM3D2.EditMenuFilter.Plugin
 				bool bContains = true;
 				CompareInfo info = CultureInfo.CurrentCulture.CompareInfo;
 
-				if ( !m_on3d2 )
+				// メニューアイテムのタイプを調べる
+				ItemType type;
+
+				type = EditMenuFilter.Instance.VanillaHash.ContainsKey( mi.m_nMenuFileRID )
+						? ItemType.Vanilla
+						: ItemType.Mod;
+
+				// COMでバニラの場合、互換かどうかも調べる
+				if ( IsCom && type.IsFlg( ItemType.Vanilla ) )
 				{
-					// バニラを表示しない場合、バニラ以外だけフィルターの判定へ進む
-					bContains = !EditMenuFilter.Instance.VanillaHash.ContainsKey( mi.m_nMenuFileRID );
+					// mi.m_bOld が使えないので「Old」GameObject(アイコン左下の互換マーク)がアクティブかどうかで調べる
+					var old = item.transform.Find( "Old" ).GetGameObject();
+					if( old && old.activeSelf ) { type = ItemType.Compatible; }
 				}
-				else if ( !m_onMod )
-				{
-					// Modを表示しない場合、バニラだけフィルターの判定へ進む
-					bContains = EditMenuFilter.Instance.VanillaHash.ContainsKey( mi.m_nMenuFileRID );
-				}
+
+				// そのタイプがONの時のみ、文字列フィルターの判定に進む
+				bContains = IsTypeFilter( type );
 
 				if ( bContains )
 				{
@@ -1118,38 +1187,28 @@ namespace CM3D2.EditMenuFilter.Plugin
 			}
 		}
 
-		public void C3D2ClickCallback()
+		// フィルター系ボタンクリック時のコールバック
+		public void TypeFilterClickCallback( ItemType flg, ItemType revFlg )
 		{
 			if ( m_isInstall )
 			{
-				m_on3d2 = !m_on3d2;
-				if ( !m_on3d2 )
-				{
-					m_onMod = true;
-					_updateButton( m_onMod, m_modBtn, m_modBtnLabel, m_modFrameSprite );
-				}
-				// ボタン状態更新
-				_updateButton( m_on3d2, m_3d2Btn, m_3d2BtnLabel, m_3d2FrameSprite );
+				// 現在そのフラグしか立っていない場合、落とすと全部消えるので反転させる
+				if( m_typeFilter == flg )	{ m_typeFilter = revFlg; }
+				else						{ RevTypeFilter( flg ); }
+				
+				// フィルターのボタン状態更新
+				_updateFilterButton();
 
 				m_filterInput.Submit();
 			}
 		}
 
-		public void ModClickCallback()
+		// 現在のフィルター状態でボタンの色を変える
+		private void _updateFilterButton()
 		{
-			if ( m_isInstall )
-			{
-				m_onMod = !m_onMod;
-				if ( !m_onMod )
-				{
-					m_on3d2 = true;
-					_updateButton( m_on3d2, m_3d2Btn, m_3d2BtnLabel, m_3d2FrameSprite );
-				}
-				// ボタン状態更新
-				_updateButton( m_onMod, m_modBtn, m_modBtnLabel, m_modFrameSprite );
-
-				m_filterInput.Submit();
-			}
+			_updateButton( IsTypeFilter( ItemType.Vanilla ), m_3d2Btn, m_3d2BtnLabel, m_3d2FrameSprite );
+			_updateButton( IsTypeFilter( ItemType.Compatible ), m_compatibleBtn, m_compatibleBtnLabel, m_compatibleFrameSprite );
+			_updateButton( IsTypeFilter( ItemType.Mod ), m_modBtn, m_modBtnLabel, m_modFrameSprite );
 		}
 
 		// 現在の状態でボタンの色を変える
@@ -1318,6 +1377,32 @@ namespace CM3D2.EditMenuFilter.Plugin
 				m_filterInput.RemoveFocus();
 			}
 		}
+
+
+		// ビット管理
+		private bool IsTypeFilter( ItemFilterCtrl.ItemType flag )
+		{
+			return m_typeFilter.IsFlg(flag);
+		}
+		private bool EqualTypeFilter( ItemFilterCtrl.ItemType flag )
+		{
+			return m_typeFilter.EqualFlg(flag);
+		}
+		private ItemFilterCtrl.ItemType SetTypeFilter( ItemFilterCtrl.ItemType flag )
+		{
+			m_typeFilter |= flag;
+			return m_typeFilter;
+		}
+		private ItemFilterCtrl.ItemType ClrTypeFilter( ItemFilterCtrl.ItemType flag )
+		{
+			m_typeFilter &= ~flag;
+			return m_typeFilter;
+		}
+		private ItemFilterCtrl.ItemType RevTypeFilter( ItemFilterCtrl.ItemType flag )
+		{
+			m_typeFilter ^= flag;
+			return m_typeFilter;
+		}
 	}
 
 
@@ -1383,7 +1468,19 @@ namespace CM3D2.EditMenuFilter.Plugin
 			return GameObject.Find( name ).GetGetComponent<T>();
 		}
 
-		
+		// ビット管理
+		public static bool IsFlg( this Enum self, Enum flag )
+		{
+			var selfValue = Convert.ToUInt64( self );
+			var flagValue = Convert.ToUInt64( flag );
+			return (selfValue & flagValue) != 0;
+		}
+		public static bool EqualFlg( this Enum self, Enum flag )
+		{
+			var selfValue = Convert.ToUInt64( self );
+			var flagValue = Convert.ToUInt64( flag );
+			return (selfValue & flagValue) == flagValue;
+		}
 	}
 }
  
